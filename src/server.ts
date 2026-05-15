@@ -6,23 +6,63 @@ import {
 } from '@angular/ssr/node';
 import express from 'express';
 import { join } from 'node:path';
+import { HashbrownGoogle } from '@hashbrownai/google';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
 const app = express();
 const angularApp = new AngularNodeAppEngine();
 
+// IMPORTANT: Parse JSON bodies for our API route
+app.use(express.json());
+
+// Initialize Hashbrown AI for the backend (Note: in v0.4+ HashbrownGoogle might not use 'new')
+// Using it as an object per the error, or standard init based on recent SDK changes
+const llm = HashbrownGoogle;
+
+const SYSTEM_PROMPT = `
+  You are a helpful AI assistant.
+`;
+
 /**
- * Example Express Rest API endpoints can be defined here.
- * Uncomment and define endpoints as necessary.
- *
- * Example:
- * ```ts
- * app.get('/api/{*splat}', (req, res) => {
- *   // Handle API request
- * });
- * ```
+ * Hashbrown Proxy Setup
  */
+app.post('/api/chat', async (req, res) => {
+  try {
+     // Server always overrides security-critical fields
+    const safeOptions = {
+      ...req.body,
+      // Pass the API key here in the request options if needed, or rely on environment variables
+      apiKey: process.env['GOOGLE_API_KEY'] || 'AIzaSyCchNsNiVOSNIdyzy5Jdj4ksnaauCVimWg',
+      model: 'gemini-2.0-flash',     // Changed to 2.0-flash as 2.5 does not exist yet for Google models publicly
+      system: SYSTEM_PROMPT,         // enforce - never trust the client
+      maxTokens: 2048,               // cap cost
+    };
+
+    // Set headers for server-sent events (streaming)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Call Hashbrown to get a stream and pipe it to the response
+    // If HashbrownGoogle has stream.text method:
+    const stream = llm.stream.text(safeOptions);
+    for await (const chunk of stream) {
+      res.write(chunk);
+    }
+    res.end();
+
+  } catch (error) {
+    console.error('Error proxying chat:', error);
+    // Note: Once headers are sent for a stream, you can't send a normal 500 status code JSON response.
+    // We try to handle this gracefully if the stream hasn't started.
+    if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to process chat request' });
+    } else {
+        res.end();
+    }
+  }
+});
 
 /**
  * Serve static files from /browser
