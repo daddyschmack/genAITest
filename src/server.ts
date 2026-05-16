@@ -29,14 +29,21 @@ const SYSTEM_PROMPT = `
  */
 app.post('/api/chat', async (req, res) => {
   try {
+        const googleApiKey = process.env['GOOGLE_API_KEY'];
+
+    if (!googleApiKey) {
+      res.status(500).json({ error: 'Server is missing GOOGLE_API_KEY' });
+      return;
+    }
+
      // Server always overrides security-critical fields
     const safeOptions = {
-      ...req.body,
-      // Pass the API key here in the request options if needed, or rely on environment variables
-      apiKey: process.env['GOOGLE_API_KEY'] || 'AIzaSyCchNsNiVOSNIdyzy5Jdj4ksnaauCVimWg',
-      model: 'gemini-2.0-flash',     // Changed to 2.0-flash as 2.5 does not exist yet for Google models publicly
-      system: SYSTEM_PROMPT,         // enforce - never trust the client
-      maxTokens: 2048,               // cap cost
+      apiKey: googleApiKey,
+      request: {
+        ...req.body,
+        model: 'gemini-2.0-flash',
+        system: SYSTEM_PROMPT,
+      }          // cap cost
     };
 
     // Set headers for server-sent events (streaming)
@@ -54,12 +61,19 @@ app.post('/api/chat', async (req, res) => {
 
   } catch (error) {
     console.error('Error proxying chat:', error);
-    // Note: Once headers are sent for a stream, you can't send a normal 500 status code JSON response.
-    // We try to handle this gracefully if the stream hasn't started.
-    if (!res.headersSent) {
-        res.status(500).json({ error: 'Failed to process chat request' });
+
+    if (error instanceof Error) {
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
     } else {
-        res.end();
+      console.error('Non-Error thrown:', JSON.stringify(error, null, 2));
+    }
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to process chat request' });
+    } else {
+      res.end();
     }
   }
 });
